@@ -130,6 +130,7 @@ section{padding:100px 24px}
 .form-input,.form-select,.form-textarea{background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:var(--radius-sm);padding:12px 16px;font-size:.9rem;font-family:'Source Sans 3',sans-serif;color:#fff;outline:none;width:100%;transition:border-color .2s,box-shadow .2s}
 .form-input:focus,.form-select:focus,.form-textarea:focus{border-color:var(--gold-light);box-shadow:0 0 0 3px rgba(212,168,75,0.18)}
 .form-input::placeholder,.form-textarea::placeholder{color:rgba(255,255,255,0.3);font-weight:300}
+.form-hint{display:block;margin-top:5px;font-size:.72rem;color:rgba(255,255,255,0.35);font-family:'Source Sans 3',sans-serif}
 .form-select{cursor:pointer;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='rgba(255,255,255,0.4)' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center}
 .form-select option{background:#0d2b52;color:#fff}
 .form-textarea{min-height:120px;resize:vertical;line-height:1.6}
@@ -318,7 +319,8 @@ footer{padding:48px 24px;background:var(--bg2);border-top:1px solid var(--border
         </div>
         <div class="form-group">
           <label class="form-label" data-key="fieldPhone">Phone / WhatsApp</label>
-          <input class="form-input" id="f-phone" type="text" placeholder="+55 11 99999-9999"/>
+          <input class="form-input" id="f-phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="+55 11 99999-9999"/>
+          <small class="form-hint" data-key="fieldPhoneHint">Include country code, e.g. +55 11 99999-9999</small>
         </div>
         <div class="form-group full">
           <label class="form-label" data-key="fieldType">Type of Office</label>
@@ -415,6 +417,8 @@ const COPY = {
     submitBtn:'Send Request →',
     successMsg:'✓ Request received! We\'ll be in touch within 24 hours.',
     errorMsg:'Something went wrong. Please try again.',
+    phoneError:'Please enter a valid phone number (at least 7 digits).',
+    fieldPhoneHint:'Include country code, e.g. +55 11 99999-9999',
     footerText:'AI Receptionists for Modern Offices',
   },
   pt: {
@@ -477,6 +481,8 @@ const COPY = {
     submitBtn:'Enviar Solicitação →',
     successMsg:'✓ Solicitação recebida! Entraremos em contato em até 24 horas.',
     errorMsg:'Algo deu errado. Por favor, tente novamente.',
+    phoneError:'Informe um telefone válido (mínimo 7 dígitos).',
+    fieldPhoneHint:'Inclua o código do país, ex: +55 11 99999-9999',
     footerText:'Recepcionistas IA para Consultórios Modernos',
   }
 };
@@ -519,6 +525,15 @@ var observer = new IntersectionObserver(function(entries) {
 }, { threshold: 0.12 });
 document.querySelectorAll('.fade-up').forEach(function(el) { observer.observe(el); });
 
+// ── Phone normalization ───────────────────────────────────────────────────────
+function normalizePhone(raw) {
+  if (!raw) return null;
+  var hasPlus = raw.startsWith('+');
+  var digits = raw.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return null; // not a valid phone
+  return (hasPlus ? '+' : '') + digits;
+}
+
 // ── Form submit ──────────────────────────────────────────────────────────────
 async function submitForm(e) {
   e.preventDefault();
@@ -528,11 +543,20 @@ async function submitForm(e) {
   btn.textContent = '...';
   status.className = 'form-status';
   status.textContent = '';
+  var rawPhone = document.getElementById('f-phone').value.trim();
+  var phone = normalizePhone(rawPhone);
+  if (rawPhone && !phone) {
+    status.className = 'form-status error';
+    status.textContent = COPY[currentLang].phoneError;
+    btn.disabled = false;
+    btn.textContent = COPY[currentLang].submitBtn;
+    return;
+  }
   var data = {
     office_name: document.getElementById('f-office').value.trim(),
     contact_name: document.getElementById('f-name').value.trim(),
     email: document.getElementById('f-email').value.trim(),
-    phone: document.getElementById('f-phone').value.trim() || null,
+    phone: phone,
     office_type: document.getElementById('f-type').value || null,
     message: document.getElementById('f-msg').value.trim() || null,
     lang: currentLang
