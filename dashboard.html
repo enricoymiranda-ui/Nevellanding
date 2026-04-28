@@ -795,54 +795,59 @@ async function callClaude(userMessage) {
       var chosenDay = parseInt(parts0[0]);
       var chosenMonth = parseInt(parts0[1]) - 1;
       var chosenYear = parts0[2] ? parseInt(parts0[2]) : now.getFullYear();
-      var isToday = (chosenDay === now.getDate() && chosenMonth === now.getMonth() && chosenYear === now.getFullYear());
+      var todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      var chosenDateObj = new Date(chosenYear, chosenMonth, chosenDay);
+      var isPast = chosenDateObj < todayMidnight;
+      var isToday = chosenDateObj.getTime() === todayMidnight.getTime();
       var dateISO = String(chosenYear) + '-' + String(chosenMonth + 1).padStart(2,'0') + '-' + String(chosenDay).padStart(2,'0');
 
-      // Run all 4 independent DB queries in parallel instead of sequentially
-      // Supabase query builder is a thenable but not a full Promise — wrap in
-      // Promise.resolve() so .catch() is available on all chain endings.
-      var [slotsResult, bookedResult, blockedDaysResult, blockedTimesResult] = await Promise.all([
-        Promise.resolve(sb.from('horarios').select('horario').eq('dia', dayOfWeek).order('horario')).catch(function() { return { data: [] }; }),
-        Promise.resolve(sb.from('agendamentos').select('horario').eq('data', dateStr)).catch(function() { return { data: [] }; }),
-        Promise.resolve(sb.from('dias_bloqueados').select('data_inicio,data_fim')).catch(function() { return { data: [] }; }),
-        Promise.resolve(sb.from('horarios_bloqueados').select('horario').eq('data', dateISO)).catch(function() { return { data: [] }; })
-      ]);
-      var allSlots = slotsResult.data || [];
-      var bookedTimes = bookedResult.data ? bookedResult.data.map(function(b) { return b.horario; }) : [];
-
-      var available = allSlots.filter(function(s) {
-        if (bookedTimes.includes(s.horario)) return false;
-        if (isToday) {
-          var tp = s.horario.split(':');
-          var slotDate = new Date(chosenYear, chosenMonth, chosenDay, parseInt(tp[0]), parseInt(tp[1]));
-          if (slotDate <= now) return false;
-        }
-        return true;
-      }).map(function(s) { return s.horario; });
-
-      // Check blocked days and availability (results already fetched above)
-
-      var isDayBlocked = (blockedDaysResult.data || []).some(function(b) {
-        return dateISO >= b.data_inicio && dateISO <= b.data_fim;
-      });
-
-      if (isDayBlocked) {
-        system += '\n\nData: ' + dateStr + ' (' + dayOfWeek + ')\nEsta data está bloqueada pela dentista. Não há atendimento. Peça outra data.';
+      if (isPast) {
+        system += '\n\nData: ' + dateStr + ' — Esta data já passou. Não é possível agendar em datas passadas. Informe o paciente e solicite uma data futura.';
       } else {
-        // Remove blocked times from available
-        var blockedHorarios = (blockedTimesResult.data || []).map(function(h) { return h.horario; });
-        available = available.filter(function(t) { return !blockedHorarios.includes(t); });
+        // Run all 4 independent DB queries in parallel instead of sequentially
+        // Supabase query builder is a thenable but not a full Promise — wrap in
+        // Promise.resolve() so .catch() is available on all chain endings.
+        var [slotsResult, bookedResult, blockedDaysResult, blockedTimesResult] = await Promise.all([
+          Promise.resolve(sb.from('horarios').select('horario').eq('dia', dayOfWeek).order('horario')).catch(function() { return { data: [] }; }),
+          Promise.resolve(sb.from('agendamentos').select('horario').eq('data', dateStr)).catch(function() { return { data: [] }; }),
+          Promise.resolve(sb.from('dias_bloqueados').select('data_inicio,data_fim')).catch(function() { return { data: [] }; }),
+          Promise.resolve(sb.from('horarios_bloqueados').select('horario').eq('data', dateISO)).catch(function() { return { data: [] }; })
+        ]);
+        var allSlots = slotsResult.data || [];
+        var bookedTimes = bookedResult.data ? bookedResult.data.map(function(b) { return b.horario; }) : [];
 
-        if (available.length > 0) {
-          system += '\n\nData: ' + dateStr + ' (' + dayOfWeek + ')\nHorários disponíveis (liste cada um com "• "):\n' + available.map(function(t){ return '• ' + t; }).join('\n');
-          if (bookedTimes.length > 0) system += '\nHorários ocupados (não oferecer): ' + bookedTimes.join(', ');
-          try {
-            var tsCfg = JSON.parse(localStorage.getItem('cf_turnos') || '{}');
-            var buf = parseInt(tsCfg.buf) || 0;
-            if (buf > 0) system += '\nPausa fluida entre consultas: ' + buf + ' min (pode ser reduzida para encaixar serviços longos — nunca ofereça horários que se sobreponham com uma consulta já marcada).';
-          } catch(e) {}
+        var available = allSlots.filter(function(s) {
+          if (bookedTimes.includes(s.horario)) return false;
+          if (isToday) {
+            var tp = s.horario.split(':');
+            var slotDate = new Date(chosenYear, chosenMonth, chosenDay, parseInt(tp[0]), parseInt(tp[1]));
+            if (slotDate <= now) return false;
+          }
+          return true;
+        }).map(function(s) { return s.horario; });
+
+        var isDayBlocked = (blockedDaysResult.data || []).some(function(b) {
+          return dateISO >= b.data_inicio && dateISO <= b.data_fim;
+        });
+
+        if (isDayBlocked) {
+          system += '\n\nData: ' + dateStr + ' (' + dayOfWeek + ')\nEsta data está bloqueada pela dentista. Não há atendimento. Peça outra data.';
         } else {
-          system += '\n\nData: ' + dateStr + ' (' + dayOfWeek + ')\nSem horários disponíveis. Peça outra data.';
+          // Remove blocked times from available
+          var blockedHorarios = (blockedTimesResult.data || []).map(function(h) { return h.horario; });
+          available = available.filter(function(t) { return !blockedHorarios.includes(t); });
+
+          if (available.length > 0) {
+            system += '\n\nData: ' + dateStr + ' (' + dayOfWeek + ')\nHorários disponíveis (liste cada um com "• "):\n' + available.map(function(t){ return '• ' + t; }).join('\n');
+            if (bookedTimes.length > 0) system += '\nHorários ocupados (não oferecer): ' + bookedTimes.join(', ');
+            try {
+              var tsCfg = JSON.parse(localStorage.getItem('cf_turnos') || '{}');
+              var buf = parseInt(tsCfg.buf) || 0;
+              if (buf > 0) system += '\nPausa fluida entre consultas: ' + buf + ' min (pode ser reduzida para encaixar serviços longos — nunca ofereça horários que se sobreponham com uma consulta já marcada).';
+            } catch(e) {}
+          } else {
+            system += '\n\nData: ' + dateStr + ' (' + dayOfWeek + ')\nSem horários disponíveis. Peça outra data.';
+          }
         }
       }
     } else {
